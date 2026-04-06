@@ -15,6 +15,7 @@ import shutil
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Iterable
 from urllib.parse import parse_qs, urlparse
 
@@ -36,6 +37,8 @@ AUTH_RELATED_ERROR_SNIPPETS = (
     "private video",
     "this video is private",
 )
+
+FFMPEG_RELATIVE_DIR = Path("vendor") / "ffmpeg" / "bin"
 
 YOUTUBE_HOSTS = {
     "youtube.com",
@@ -312,10 +315,52 @@ def build_base_options(
     if shutil.which("node"):
         options["js_runtimes"] = {"node": {}}
 
+    ffmpeg_location = resolve_ffmpeg_location()
+    if ffmpeg_location is not None:
+        options["ffmpeg_location"] = ffmpeg_location
+
     if cookie_browser:
         options["cookiesfrombrowser"] = (cookie_browser, chrome_profile, None, None)
 
     return options
+
+
+def resolve_ffmpeg_location() -> str | None:
+    candidate_dirs = []
+
+    if hasattr(sys, "_MEIPASS"):
+        candidate_dirs.append(Path(sys._MEIPASS) / FFMPEG_RELATIVE_DIR)
+
+    candidate_dirs.append(Path(__file__).resolve().parent.parent / FFMPEG_RELATIVE_DIR)
+
+    seen: set[Path] = set()
+    for candidate_dir in candidate_dirs:
+        resolved_dir = candidate_dir.resolve()
+        if resolved_dir in seen:
+            continue
+        seen.add(resolved_dir)
+        if has_ffmpeg_binaries(resolved_dir):
+            return str(resolved_dir)
+
+    ffmpeg_path = shutil.which(binary_name("ffmpeg"))
+    if ffmpeg_path:
+        return str(Path(ffmpeg_path).resolve().parent)
+
+    return None
+
+
+def has_ffmpeg_binaries(directory: Path) -> bool:
+    return (
+        directory.is_dir()
+        and (directory / binary_name("ffmpeg")).exists()
+        and (directory / binary_name("ffprobe")).exists()
+    )
+
+
+def binary_name(command: str) -> str:
+    if sys.platform == "win32":
+        return f"{command}.exe"
+    return command
 
 
 def build_playlist_options(

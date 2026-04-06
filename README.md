@@ -1,31 +1,37 @@
 # YTDownloader
 
-A Windows-friendly YouTube downloader with a desktop UI and optional CLI mode.
-<img width="full" alt="Screenshot 2026-04-06 223507" src="https://github.com/user-attachments/assets/2bd8f83d-d462-46a9-b068-e0a9be3f50d2" />
+YouTube downloader with a desktop UI, optional CLI mode, and a Windows installer.
 
-## What It Does
+## Features
 
-- Scans a video or playlist before downloading
-- Shows title, channel, duration, and thumbnail
-- Lets you choose the exact video or audio format
-- Supports playlist downloads with common playlist-safe formats
-- Supports optional browser cookies when YouTube requires login
-- Lets you choose where downloads are saved
+- Scan a video or playlist before downloading
+- Pick the exact video or audio format
+- Download playlists with common playlist-safe formats
+- Use optional browser cookies when YouTube requires login
+- Bundle FFmpeg in the Windows build for merged video+audio downloads
 
-## Install
+## Windows Install
 
-### Windows Installer
-
-Run:
+Use the installer:
 
 ```powershell
-YTDownloader-Setup.exe
+dist\installer\YTDownloader-Setup.exe
 ```
 
 Notes:
 
 - Python is not required on the target machine
-- If SmartScreen appears, click `More info` then `Run anyway`
+- Windows may show SmartScreen for an unsigned installer
+
+## Portable Build
+
+Run the bundled app directly:
+
+```powershell
+dist\YTDownloader\YTDownloader.exe
+```
+
+Keep the full `dist\YTDownloader\` folder together.
 
 ## Run From Source
 
@@ -55,17 +61,34 @@ From the packaged app:
 dist\YTDownloader\YTDownloader.exe --cli "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
-Choose an output folder in CLI mode:
+Choose a save folder:
 
 ```powershell
 python app.py --cli --output-dir "D:\Videos" "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
-## Cookie Support
+## Build
 
-For normal public videos, cookies are usually not needed.
+Packaging flow:
 
-If YouTube requires login, the app can use browser cookies and falls back in this order:
+`Python app -> PyInstaller --onedir -> Inno Setup installer`
+
+Build everything:
+
+```powershell
+.\build_installer.ps1
+```
+
+Outputs:
+
+- `dist\YTDownloader\`
+- `dist\installer\YTDownloader-Setup.exe`
+
+## Cookies
+
+For public videos, cookies are usually not needed.
+
+If YouTube requires login, the app falls back in this order:
 
 - `chrome`
 - `edge`
