@@ -1,22 +1,26 @@
-# YouTube Downloader CLI
+# YouTube Downloader
 
-A terminal-only YouTube downloader built with Python 3 and `yt-dlp`.
+A YouTube downloader with a Tkinter desktop UI and the original CLI workflow.
 
 ## Features
 
-- Accepts a YouTube video URL from the command line or an interactive prompt
+- Desktop UI with YouTube-themed styling
+- Accepts single video and playlist URLs
+- Shows the main video thumbnail when available
+- Lists playlist videos with thumbnails
 - Prompts for the save folder before starting the download
 - Downloads public YouTube videos without browser cookies
 - Supports optional browser cookies for logged-in videos
 - Cookie fallback order is `chrome`, then `edge`, then `brave`
 - Automatically retries with browser cookies when a no-cookie YouTube auth error is detected
 - Lists available video and audio formats before downloading
+- Scans every playlist item and only offers common playlist-safe formats
 - Lets you choose the exact numbered format you want
-- Supports choosing the download folder with `--output-dir`
+- Supports choosing the download folder with `--output-dir` in CLI mode
 - Supports:
   - video downloads with audio
   - audio-only downloads
-- Shows download progress in the terminal
+- Shows download progress in the UI and terminal
 - Saves files to the current folder by default
 
 ## Install
@@ -31,27 +35,29 @@ pip install -r requirements.txt
 Or install directly:
 
 ```bash
-pip install yt-dlp
+pip install yt-dlp Pillow
 ```
 
-## Run
+## Run The Desktop UI
 
-Pass the URL directly:
+Start the Tkinter app:
 
 ```bash
-python app.py "https://www.youtube.com/watch?v=VIDEO_ID"
+python app.py
+```
+
+## Run The Original CLI
+
+The CLI is still available through `--cli`:
+
+```bash
+python app.py --cli "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
 Save to a specific folder:
 
 ```bash
-python app.py --output-dir "D:\\Videos" "https://www.youtube.com/watch?v=VIDEO_ID"
-```
-
-Or run without arguments and paste the URL when prompted:
-
-```bash
-python app.py
+python app.py --cli --output-dir "D:\\Videos" "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
 If you do not pass `--output-dir`, the CLI asks where to save the file before you choose a format.

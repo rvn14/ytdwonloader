@@ -1,1 +1,5 @@
-yt-dlp
+# Third-party packages used by this app.
+# Standard-library modules such as tkinter, urllib, threading, and pathlib
+# come with Python and are not listed here.
+yt-dlp>=2026.3.17
+Pillow

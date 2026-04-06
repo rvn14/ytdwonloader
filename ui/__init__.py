@@ -1,8 +1,5 @@
-"""UI package (placeholder).
+"""UI package exports."""
 
-This project includes a UI layer in the planned architecture. The CLI
-implementation remains in `core` for now; UI modules can import services
-and `core` functions as needed.
-"""
+from .interface import YouTubeDownloaderUI, main
 
-__all__ = []
+__all__ = ["YouTubeDownloaderUI", "main"]

@@ -11,10 +11,11 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import sys
 import time
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Callable, Iterable
 from urllib.parse import parse_qs, urlparse
 
 from yt_dlp import YoutubeDL
@@ -70,6 +71,9 @@ class PlaylistEntry:
 
     title: str
     url: str
+    channel: str = "-"
+    duration_text: str = "unknown"
+    thumbnail_url: str | None = None
 
 
 @dataclass
@@ -80,6 +84,9 @@ class PlaylistScannedVideo:
     url: str
     option_by_key: dict[str, DownloadOption]
     available_labels: list[str]
+    channel: str = "-"
+    duration_text: str = "unknown"
+    thumbnail_url: str | None = None
 
 
 @dataclass
@@ -114,9 +121,10 @@ class QuietYDLLogger:
 class ProgressPrinter:
     """Prints a simple single-line progress view that updates in place."""
 
-    def __init__(self) -> None:
+    def __init__(self, message_callback: Callable[[dict], None] | None = None) -> None:
         self._last_length = 0
         self._last_update = 0.0
+        self._message_callback = message_callback
 
     def download_hook(self, data: dict) -> None:
         status = data.get("status")
@@ -132,8 +140,10 @@ class ProgressPrinter:
             speed = data.get("speed")
             eta = data.get("eta")
 
+            percent_value = None
             if total:
-                percent = f"{downloaded / total * 100:5.1f}%"
+                percent_value = downloaded / total * 100
+                percent = f"{percent_value:5.1f}%"
                 total_text = human_size(total)
             else:
                 percent = "  ?.?%"
@@ -145,20 +155,59 @@ class ProgressPrinter:
                 f"speed {human_size(speed) + '/s' if speed else 'unknown'}  "
                 f"ETA {format_eta(eta)}"
             )
-            self._print_inline(line)
+            self._emit(
+                {
+                    "phase": "download",
+                    "status": "downloading",
+                    "text": line,
+                    "percent": percent_value,
+                    "downloaded_bytes": downloaded,
+                    "total_bytes": total,
+                    "speed": speed,
+                    "eta": eta,
+                }
+            )
 
         elif status == "finished":
             filename = os.path.basename(data.get("filename", "download"))
-            self._print_inline(f"[download] Finished: {filename}", newline=True)
+            self._emit(
+                {
+                    "phase": "download",
+                    "status": "finished",
+                    "text": f"[download] Finished: {filename}",
+                    "percent": 100.0,
+                    "filename": filename,
+                },
+                newline=True,
+            )
 
     def postprocessor_hook(self, data: dict) -> None:
         status = data.get("status")
         postprocessor = data.get("postprocessor", "post-processing")
 
         if status in {"started", "processing"}:
-            self._print_inline(f"[postprocess] {postprocessor}...")
+            self._emit(
+                {
+                    "phase": "postprocess",
+                    "status": status,
+                    "text": f"[postprocess] {postprocessor}...",
+                }
+            )
         elif status == "finished":
-            self._print_inline("[postprocess] Completed.", newline=True)
+            self._emit(
+                {
+                    "phase": "postprocess",
+                    "status": "finished",
+                    "text": "[postprocess] Completed.",
+                },
+                newline=True,
+            )
+
+    def _emit(self, payload: dict, newline: bool = False) -> None:
+        if self._message_callback is not None:
+            self._message_callback(payload)
+            return
+        self._print_inline(payload["text"], newline=newline)
 
     def _print_inline(self, message: str, newline: bool = False) -> None:
         padded = message.ljust(self._last_length)
@@ -260,6 +309,9 @@ def build_base_options(
         "logger": QuietYDLLogger(),
     }
 
+    if shutil.which("node"):
+        options["js_runtimes"] = {"node": {}}
+
     if cookie_browser:
         options["cookiesfrombrowser"] = (cookie_browser, chrome_profile, None, None)
 
@@ -286,23 +338,42 @@ def build_playlist_options(
 
 
 def extract_video_info(
-    url: str, use_chrome_cookies: bool, chrome_profile: str | None, output_dir: str
+    url: str,
+    use_chrome_cookies: bool,
+    chrome_profile: str | None,
+    output_dir: str,
+    logger: Callable[[str], None] | None = None,
 ) -> tuple[dict, str]:
+    metadata_options = {"ignore_no_formats_error": True}
+
     if use_chrome_cookies:
-        return extract_video_info_with_cookie_fallback(url, chrome_profile, output_dir)
+        return extract_video_info_with_cookie_fallback(
+            url,
+            chrome_profile,
+            output_dir,
+            logger=logger,
+            metadata_options=metadata_options,
+        )
 
     try:
-        with YoutubeDL(build_base_options(output_dir=output_dir)) as ydl:
+        options = build_base_options(output_dir=output_dir)
+        options.update(metadata_options)
+        with YoutubeDL(options) as ydl:
             info = ydl.extract_info(url, download=False)
         return unwrap_video_info(info), COOKIE_SOURCE_NONE
     except Exception as exc:
         if is_auth_related_error(exc):
-            print(
+            log_message(
                 "Metadata requires a logged-in session. Retrying with browser cookies...",
-                file=sys.stderr,
+                logger=logger,
+                stream="stderr",
             )
             return extract_video_info_with_cookie_fallback(
-                url, chrome_profile, output_dir, initial_error=exc
+                url,
+                chrome_profile,
+                output_dir,
+                initial_error=exc,
+                logger=logger,
             )
         raise RuntimeError(build_metadata_error_message(exc)) from exc
 
@@ -312,18 +383,21 @@ def extract_video_info_with_cookie_fallback(
     chrome_profile: str | None,
     output_dir: str,
     initial_error: Exception | None = None,
+    logger: Callable[[str], None] | None = None,
+    metadata_options: dict | None = None,
 ) -> tuple[dict, str]:
     cookie_errors: list[tuple[str, Exception]] = []
 
     for browser in COOKIE_FALLBACK_BROWSERS:
         try:
-            with YoutubeDL(
-                build_base_options(
-                    cookie_browser=browser,
-                    chrome_profile=chrome_profile,
-                    output_dir=output_dir,
-                )
-            ) as ydl:
+            options = build_base_options(
+                cookie_browser=browser,
+                chrome_profile=chrome_profile,
+                output_dir=output_dir,
+            )
+            if metadata_options:
+                options.update(metadata_options)
+            with YoutubeDL(options) as ydl:
                 info = ydl.extract_info(url, download=False)
             return unwrap_video_info(info), browser
         except Exception as exc:
@@ -335,23 +409,42 @@ def extract_video_info_with_cookie_fallback(
 
 
 def extract_playlist_info(
-    url: str, use_chrome_cookies: bool, chrome_profile: str | None, output_dir: str
+    url: str,
+    use_chrome_cookies: bool,
+    chrome_profile: str | None,
+    output_dir: str,
+    logger: Callable[[str], None] | None = None,
 ) -> tuple[dict, str]:
+    metadata_options = {"ignore_no_formats_error": True}
+
     if use_chrome_cookies:
-        return extract_playlist_info_with_cookie_fallback(url, chrome_profile, output_dir)
+        return extract_playlist_info_with_cookie_fallback(
+            url,
+            chrome_profile,
+            output_dir,
+            logger=logger,
+            metadata_options=metadata_options,
+        )
 
     try:
-        with YoutubeDL(build_playlist_options(output_dir=output_dir)) as ydl:
+        options = build_playlist_options(output_dir=output_dir)
+        options.update(metadata_options)
+        with YoutubeDL(options) as ydl:
             info = ydl.extract_info(url, download=False)
         return info, COOKIE_SOURCE_NONE
     except Exception as exc:
         if is_auth_related_error(exc):
-            print(
+            log_message(
                 "Playlist metadata requires a logged-in session. Retrying with browser cookies...",
-                file=sys.stderr,
+                logger=logger,
+                stream="stderr",
             )
             return extract_playlist_info_with_cookie_fallback(
-                url, chrome_profile, output_dir, initial_error=exc
+                url,
+                chrome_profile,
+                output_dir,
+                initial_error=exc,
+                logger=logger,
             )
         raise RuntimeError(build_playlist_error_message(exc)) from exc
 
@@ -361,18 +454,21 @@ def extract_playlist_info_with_cookie_fallback(
     chrome_profile: str | None,
     output_dir: str,
     initial_error: Exception | None = None,
+    logger: Callable[[str], None] | None = None,
+    metadata_options: dict | None = None,
 ) -> tuple[dict, str]:
     cookie_errors: list[tuple[str, Exception]] = []
 
     for browser in COOKIE_FALLBACK_BROWSERS:
         try:
-            with YoutubeDL(
-                build_playlist_options(
-                    cookie_browser=browser,
-                    chrome_profile=chrome_profile,
-                    output_dir=output_dir,
-                )
-            ) as ydl:
+            options = build_playlist_options(
+                cookie_browser=browser,
+                chrome_profile=chrome_profile,
+                output_dir=output_dir,
+            )
+            if metadata_options:
+                options.update(metadata_options)
+            with YoutubeDL(options) as ydl:
                 info = ydl.extract_info(url, download=False)
             return info, browser
         except Exception as exc:
@@ -407,6 +503,9 @@ def build_playlist_entries(playlist_info: dict) -> list[PlaylistEntry]:
             PlaylistEntry(
                 title=title,
                 url=f"https://www.youtube.com/watch?v={video_id}",
+                channel=item.get("channel") or item.get("uploader") or "-",
+                duration_text=format_duration(item.get("duration")),
+                thumbnail_url=select_thumbnail_url(item),
             )
         )
 
@@ -501,6 +600,58 @@ def build_download_options(info: dict) -> tuple[list[DownloadOption], list[Downl
     assign_numbers(video_options, start=1)
     assign_numbers(audio_options, start=len(video_options) + 1)
     return video_options, audio_options
+
+
+def filter_download_options_for_url(
+    url: str,
+    video_options: list[DownloadOption],
+    audio_options: list[DownloadOption],
+    cookie_browser: str,
+    chrome_profile: str | None,
+    output_dir: str,
+    logger: Callable[[str], None] | None = None,
+) -> tuple[list[DownloadOption], list[DownloadOption]]:
+    valid_video_options = [
+        option
+        for option in video_options
+        if can_download_selector(
+            url,
+            option.format_selector,
+            cookie_browser,
+            chrome_profile,
+            output_dir,
+        )
+    ]
+    valid_audio_options = [
+        option
+        for option in audio_options
+        if can_download_selector(
+            url,
+            option.format_selector,
+            cookie_browser,
+            chrome_profile,
+            output_dir,
+        )
+    ]
+
+    if not valid_video_options and not valid_audio_options:
+        raise RuntimeError(
+            "No downloadable formats passed yt-dlp validation for this video.\n"
+            "This is usually caused by an upstream YouTube/yt-dlp compatibility issue."
+        )
+
+    if logger is not None:
+        removed_count = (len(video_options) + len(audio_options)) - (
+            len(valid_video_options) + len(valid_audio_options)
+        )
+        if removed_count > 0:
+            logger(
+                f"Filtered out {removed_count} unavailable format option(s) after validation."
+            )
+
+    assign_numbers(valid_video_options, start=1)
+    assign_numbers(valid_audio_options, start=len(valid_video_options) + 1)
+    return valid_video_options, valid_audio_options
 
 
 def assign_numbers(options: list[DownloadOption], start: int) -> None:
@@ -696,14 +847,21 @@ def scan_playlist_formats(
     use_chrome_cookies: bool,
     chrome_profile: str | None,
     output_dir: str,
+    logger: Callable[[str], None] | None = None,
 ) -> list[PlaylistScannedVideo]:
-    print_section("Playlist Format Scan")
-    print("Scanning all videos in the playlist to discover available formats...")
+    if logger is None:
+        print_section("Playlist Format Scan")
+        print("Scanning all videos in the playlist to discover available formats...")
+    else:
+        logger("Scanning all videos in the playlist to discover available formats...")
 
     scanned: list[PlaylistScannedVideo] = []
 
     for index, entry in enumerate(playlist_entries, start=1):
-        print(f"  [{index}/{len(playlist_entries)}] {entry.title}")
+        log_message(
+            f"[{index}/{len(playlist_entries)}] {entry.title}",
+            logger=logger,
+        )
 
         try:
             info, _ = extract_video_info(
@@ -711,6 +869,7 @@ def scan_playlist_formats(
                 use_chrome_cookies,
                 chrome_profile,
                 output_dir,
+                logger=logger,
             )
             video_options, audio_options = build_download_options(info)
             option_by_key = build_playlist_option_mapping(video_options, audio_options)
@@ -721,6 +880,9 @@ def scan_playlist_formats(
                 PlaylistScannedVideo(
                     title=entry.title,
                     url=entry.url,
+                    channel=entry.channel,
+                    duration_text=entry.duration_text,
+                    thumbnail_url=entry.thumbnail_url or select_thumbnail_url(info),
                     option_by_key=option_by_key,
                     available_labels=available_labels,
                 )
@@ -965,8 +1127,10 @@ def download_media(
     cookie_browser: str,
     chrome_profile: str | None,
     output_dir: str,
+    progress_callback: Callable[[dict], None] | None = None,
+    logger: Callable[[str], None] | None = None,
 ) -> None:
-    progress = ProgressPrinter()
+    progress = ProgressPrinter(message_callback=progress_callback)
     selected_cookie_browser = (
         None if cookie_browser == COOKIE_SOURCE_NONE else cookie_browser
     )
@@ -988,24 +1152,67 @@ def download_media(
             ydl.download([url])
     except DownloadError as exc:
         if selected_cookie_browser is None and is_auth_related_error(exc):
-            print(
+            log_message(
                 "\nDownload requires a logged-in session. Retrying with browser cookies...",
-                file=sys.stderr,
+                logger=logger,
+                stream="stderr",
             )
-            retry_download_with_cookie_fallback(url, option, chrome_profile, output_dir)
+            retry_download_with_cookie_fallback(
+                url,
+                option,
+                chrome_profile,
+                output_dir,
+                progress_callback=progress_callback,
+                logger=logger,
+            )
             return
         raise RuntimeError(f"Download failed: {exc}") from exc
     except Exception as exc:
         raise RuntimeError(f"Unexpected download failure: {exc}") from exc
 
 
+def can_download_selector(
+    url: str,
+    format_selector: str,
+    cookie_browser: str,
+    chrome_profile: str | None,
+    output_dir: str,
+) -> bool:
+    selected_cookie_browser = (
+        None if cookie_browser == COOKIE_SOURCE_NONE else cookie_browser
+    )
+    ydl_options = build_base_options(
+        cookie_browser=selected_cookie_browser,
+        chrome_profile=chrome_profile if selected_cookie_browser else None,
+        output_dir=output_dir,
+    )
+    ydl_options.update(
+        {
+            "format": format_selector,
+            "skip_download": True,
+        }
+    )
+
+    try:
+        with YoutubeDL(ydl_options) as ydl:
+            ydl.download([url])
+        return True
+    except Exception:
+        return False
+
+
 def retry_download_with_cookie_fallback(
-    url: str, option: DownloadOption, chrome_profile: str | None, output_dir: str
+    url: str,
+    option: DownloadOption,
+    chrome_profile: str | None,
+    output_dir: str,
+    progress_callback: Callable[[dict], None] | None = None,
+    logger: Callable[[str], None] | None = None,
 ) -> None:
     cookie_errors: list[tuple[str, Exception]] = []
 
     for browser in COOKIE_FALLBACK_BROWSERS:
-        progress = ProgressPrinter()
+        progress = ProgressPrinter(message_callback=progress_callback)
         ydl_options = build_base_options(
             cookie_browser=browser,
             chrome_profile=chrome_profile,
@@ -1020,10 +1227,18 @@ def retry_download_with_cookie_fallback(
         )
 
         try:
-            print(f"Trying browser cookies from {browser}...", file=sys.stderr)
+            log_message(
+                f"Trying browser cookies from {browser}...",
+                logger=logger,
+                stream="stderr",
+            )
             with YoutubeDL(ydl_options) as ydl:
                 ydl.download([url])
-            print(f"Retry succeeded using {browser} cookies.", file=sys.stderr)
+            log_message(
+                f"Retry succeeded using {browser} cookies.",
+                logger=logger,
+                stream="stderr",
+            )
             return
         except Exception as exc:
             cookie_errors.append((browser, exc))
@@ -1044,6 +1259,40 @@ def human_size(size_bytes: int | float | None) -> str:
         unit_index += 1
 
     return f"{size:.1f} {units[unit_index]}"
+
+
+def log_message(
+    message: str,
+    logger: Callable[[str], None] | None = None,
+    *,
+    stream: str = "stdout",
+) -> None:
+    if logger is not None:
+        logger(message)
+        return
+
+    if stream == "stderr":
+        print(message, file=sys.stderr)
+        return
+
+    print(message)
+
+
+def select_thumbnail_url(info: dict) -> str | None:
+    thumbnails = info.get("thumbnails") or []
+    if thumbnails:
+        valid = [item for item in thumbnails if item.get("url")]
+        if valid:
+            valid.sort(
+                key=lambda item: (
+                    item.get("width") or 0,
+                    item.get("height") or 0,
+                )
+            )
+            return valid[-1]["url"]
+
+    thumbnail = info.get("thumbnail")
+    return str(thumbnail) if thumbnail else None
 
 
 def clean_ydl_error(error: Exception) -> str:
@@ -1124,6 +1373,21 @@ def resolve_output_dir(output_dir: str | None) -> str:
     return resolved
 
 
+def configure_console_output() -> None:
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None or not hasattr(stream, "reconfigure"):
+            continue
+
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (LookupError, OSError, ValueError):
+            try:
+                stream.reconfigure(errors="replace")
+            except (LookupError, OSError, ValueError):
+                continue
+
+
 def print_header() -> None:
     line = "=" * 72
     print(line)
@@ -1163,6 +1427,7 @@ def prompt_for_output_dir(initial_output_dir: str, playlist_name: str | None = N
 
 
 def main() -> int:
+    configure_console_output()
     args = parse_arguments()
     use_chrome_cookies = args.use_chrome_cookies or bool(args.chrome_profile)
     output_dir = resolve_output_dir(args.output_dir)

@@ -1,17 +1,21 @@
-"""Service layer package for higher-level workflows."""
+"""Service layer exports."""
 
-from ..core import (
-    scan_playlist_formats,
-    build_common_playlist_options,
-    build_download_options,
-    extract_video_info,
-    extract_playlist_info,
+from .youtube_service import (
+    ScanResult,
+    describe_cookie_source,
+    download_scan_result,
+    get_playlist_option,
+    get_video_option,
+    scan_playlist,
+    scan_url,
 )
 
 __all__ = [
-    "scan_playlist_formats",
-    "build_common_playlist_options",
-    "build_download_options",
-    "extract_video_info",
-    "extract_playlist_info",
+    "ScanResult",
+    "describe_cookie_source",
+    "download_scan_result",
+    "get_playlist_option",
+    "get_video_option",
+    "scan_playlist",
+    "scan_url",
 ]
