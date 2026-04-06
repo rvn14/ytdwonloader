@@ -1,37 +1,30 @@
 # YTDownloader
 
-YouTube downloader with a desktop UI, optional CLI mode, and a Windows installer.
+A Windows-friendly YouTube downloader with a desktop UI and optional CLI mode.
 
-## Features
+## What It Does
 
-- Scan a video or playlist before downloading
-- Pick the exact video or audio format
-- Download playlists with common playlist-safe formats
-- Use optional browser cookies when YouTube requires login
-- Bundle FFmpeg in the Windows build for merged video+audio downloads
+- Scans a video or playlist before downloading
+- Shows title, channel, duration, and thumbnail
+- Lets you choose the exact video or audio format
+- Supports playlist downloads with common playlist-safe formats
+- Supports optional browser cookies when YouTube requires login
+- Lets you choose where downloads are saved
 
-## Windows Install
+## Install
 
-Use the installer:
+### Windows Installer
+
+Run:
 
 ```powershell
-dist\installer\YTDownloader-Setup.exe
+YTDownloader-Setup.exe
 ```
 
 Notes:
 
 - Python is not required on the target machine
-- Windows may show SmartScreen for an unsigned installer
-
-## Portable Build
-
-Run the bundled app directly:
-
-```powershell
-dist\YTDownloader\YTDownloader.exe
-```
-
-Keep the full `dist\YTDownloader\` folder together.
+- If SmartScreen appears, click `More info` then `Run anyway`
 
 ## Run From Source
 
@@ -61,34 +54,17 @@ From the packaged app:
 dist\YTDownloader\YTDownloader.exe --cli "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
-Choose a save folder:
+Choose an output folder in CLI mode:
 
 ```powershell
 python app.py --cli --output-dir "D:\Videos" "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
-## Build
+## Cookie Support
 
-Packaging flow:
+For normal public videos, cookies are usually not needed.
 
-`Python app -> PyInstaller --onedir -> Inno Setup installer`
-
-Build everything:
-
-```powershell
-.\build_installer.ps1
-```
-
-Outputs:
-
-- `dist\YTDownloader\`
-- `dist\installer\YTDownloader-Setup.exe`
-
-## Cookies
-
-For public videos, cookies are usually not needed.
-
-If YouTube requires login, the app falls back in this order:
+If YouTube requires login, the app can use browser cookies and falls back in this order:
 
 - `chrome`
 - `edge`
