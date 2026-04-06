@@ -245,7 +245,7 @@ def extract_video_info(
     except Exception as exc:  # yt-dlp raises multiple exception types here.
         if is_auth_related_error(exc):
             print(
-                "Metadata requires a logged-in session. Retrying with browser cookies...",
+                "Metadata requires a logged-in session! Retrying with browser cookies...",
                 file=sys.stderr,
             )
             return extract_video_info_with_cookie_fallback(
