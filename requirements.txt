@@ -3,3 +3,4 @@
 # come with Python and are not listed here.
 yt-dlp>=2026.3.17
 Pillow
+customtkinter

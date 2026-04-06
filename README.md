@@ -35,7 +35,7 @@ pip install -r requirements.txt
 Or install directly:
 
 ```bash
-pip install yt-dlp Pillow
+pip install yt-dlp Pillow customtkinter
 ```
 
 ## Run The Desktop UI
